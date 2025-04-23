@@ -1,0 +1,301 @@
+from flask import Flask, request, send_file
+from docx import Document
+from docx.shared import Pt, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_ALIGN_VERTICAL
+import datetime
+import os
+
+app = Flask(__name__)
+
+# HTML-шаблон с улучшенным дизайном
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор документов</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-1: #f8f9ff;
+            --bg-2: #eef0ff;
+            --card-bg: rgba(255, 255, 255, 0.95);
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --text: #1e293b;
+            --border: #e2e8f0;
+            --shadow: 0 12px 32px rgba(0,0,0,0.08);
+            --radius: 16px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(45deg, var(--bg-1), var(--bg-2));
+            color: var(--text);
+            position: relative;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            width: 150%;
+            height: 150%;
+            background: radial-gradient(circle at 50% 50%, 
+                rgba(199, 210, 254, 0.15) 0%, 
+                rgba(199, 210, 254, 0) 60%);
+            animation: gradient-pulse 20s infinite alternate;
+        }
+
+        .container {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 480px;
+            margin: 1rem;
+            border: 1px solid rgba(255,255,255,0.3);
+            transform: translateY(0);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .container:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 24px 48px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin-bottom: 2rem;
+            text-align: center;
+            background: linear-gradient(45deg, var(--primary), #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text);
+            opacity: 0.9;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 0.9rem;
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: rgba(255,255,255,0.8);
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+            transform: scale(1.02);
+        }
+
+        input:hover, select:hover {
+            border-color: #c7d2fe;
+        }
+
+        button {
+            width: 100%;
+            padding: 1rem;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                120deg,
+                transparent,
+                rgba(255,255,255,0.3),
+                transparent
+            );
+            transition: 0.5s;
+        }
+
+        button:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(99, 102, 241, 0.2);
+        }
+
+        button:hover::before {
+            left: 100%;
+        }
+
+        .error {
+            color: #ef4444;
+            font-size: 0.9rem;
+            text-align: center;
+            margin-top: 1.5rem;
+            opacity: 0;
+            animation: fadeIn 0.3s ease forwards;
+        }
+
+        @keyframes gradient-pulse {
+            0% { transform: rotate(0deg) scale(1); }
+            100% { transform: rotate(5deg) scale(1.1); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Генератор Документов</h1>
+        <form method="POST">
+            <div class="form-group">
+                <label>Тип документа</label>
+                <select name="doc_type">
+                    <option value="dogovor">Договор</option>
+                    <option value="schet">Счёт</option>
+                    <option value="zayavlenie">Заявление</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Номер документа</label>
+                <input type="text" name="number" required>
+            </div>
+            
+            <div class="form-group">
+                <label>Ваша организация</label>
+                <input type="text" name="company_name" required>
+            </div>
+            
+            <div class="form-group">
+                <label>Клиент/Получатель</label>
+                <input type="text" name="client_name" required>
+            </div>
+            
+            <div class="form-group">
+                <label>Город</label>
+                <input type="text" name="city" value="Москва">
+            </div>
+            
+            <div class="form-group">
+                <label>Сумма (руб)</label>
+                <input type="number" name="amount">
+            </div>
+            
+            <button type="submit">
+                Создать документ → 
+            </button>
+            
+            {% if error %}
+            <div class="error">{{ error }}</div>
+            {% endif %}
+        </form>
+    </div>
+</body>
+</html>
+"""
+
+def create_document(doc_type, data):
+    try:
+        doc = Document()
+        
+        # Стили документа
+        style = doc.styles['Normal']
+        style.font.name = 'Arial'
+        style.font.size = Pt(11)
+        
+        # Заголовок
+        title = doc.add_paragraph(style='Heading 1')
+        title_run = title.add_run(f"{doc_type.upper()} № {data['number']}")
+        title_run.font.size = Pt(14)
+        title_run.bold = True
+        title.alignment = 1  # CENTER
+        
+        # Содержимое
+        doc.add_paragraph(f"Дата: {data['date']}")
+        doc.add_paragraph(f"От: {data['company_name']}")
+        doc.add_paragraph(f"Для: {data['client_name']}")
+        doc.add_paragraph()  # Пустая строка
+        
+        # Подписи
+        table = doc.add_table(rows=1, cols=2)
+        table.style = 'Table Grid'
+        row = table.rows[0]
+        row.cells[0].text = "Подпись:\n\n_________________"
+        row.cells[1].text = "Дата:\n\n_________________"
+        
+        filename = f"{doc_type}_document.docx"
+        doc.save(filename)
+        return filename
+        
+    except Exception as e:
+        print(f"Ошибка создания документа: {str(e)}")
+        return None
+
+@app.route("/", methods=["GET", "POST"])
+def home():
+    error = None
+    if request.method == "POST":
+        try:
+            data = {
+                "doc_type": request.form.get("doc_type", "dogovor"),
+                "number": request.form.get("number", "1"),
+                "company_name": request.form.get("company_name", ""),
+                "client_name": request.form.get("client_name", ""),
+                "date": datetime.datetime.now().strftime("%d.%m.%Y")
+            }
+            
+            if not all([data["number"], data["company_name"], data["client_name"]]):
+                error = "Пожалуйста, заполните все поля"
+            else:
+                filename = create_document(data["doc_type"], data)
+                if filename and os.path.exists(filename):
+                    return send_file(filename, as_attachment=True)
+                error = "Ошибка при создании документа"
+                
+        except Exception as e:
+            error = f"Произошла ошибка: {str(e)}"
+    
+    return HTML_TEMPLATE.replace("{% if error %}", "").replace("{% endif %}", "").replace("{{ error }}", error if error else "")
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
